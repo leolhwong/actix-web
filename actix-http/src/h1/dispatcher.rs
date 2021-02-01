@@ -63,98 +63,97 @@ where
         Dispatcher::new(io, flow, on_connect_data, peer_addr, config, sleep);
 
     loop {
-        // read from io and fill read buffer.
-        // state indicate if all data has been read.
-        let state = match dispatcher.read().await {
-            Ok(state) => state,
-            Err(e) => {
-                error!("DispatchReader error: {}", e);
-                break;
-            }
-        };
-
-        // decode read buffer and call service future.
-        // return response body.
-        let payload = match dispatcher.codec.decode(&mut dispatcher.read_buf) {
-            // decode successful.
-            Ok(Some((mut req, pl))) => {
-                trace!(
-                    "http message received: {:?}\r\n\r\npayload type: {:?}",
-                    req,
-                    pl
-                );
-
-                // write dispatcher's state to request.
-                dispatcher.set_peer_addr(&mut req);
-                dispatcher.set_on_connect_data(&mut req);
-
-                // payload type indicate how request is handled.
-                // return decoder and payload sender in tuple.
-                let mut payload = match pl {
-                    // upgrade the dispatcher and poll on it exclusively.
-                    PayloadType::Stream(_) if dispatcher.is_upgradeable() => {
-                        return dispatcher.upgrade(req).await
+        match dispatcher.state {
+            DispatcherState::Read => {
+                match dispatcher.read().await {
+                    // read success. go to handle branch carrying the read state.
+                    // it's used to determine if more read is needed.
+                    Ok(state) => dispatcher.set_state(DispatcherState::Handle(state)),
+                    Err(e) => {
+                        error!("DispatchReader error: {}", e);
+                        dispatcher.set_state(DispatcherState::Stop);
                     }
-                    // generate and set payload for dispatcher.
-                    PayloadType::Stream(decoder) | PayloadType::Payload(decoder) => {
-                        // Payload is a smart pointer passed to service call where incoming
-                        // io data can be read from.
-                        // PayloadSender is the sink of Payload for pushing new data into it.
-                        let (ps, pl) = Payload::create(false);
-                        let (req1, _) = req.replace_payload(crate::Payload::H1(pl));
-                        req = req1;
-                        Some((decoder, ps))
-                    }
-                    // no payload so ignore.
-                    PayloadType::None => None,
                 };
+            }
+            DispatcherState::Handle(ref state) => {
+                match dispatcher.codec.decode(&mut dispatcher.read_buf) {
+                    // decode successful.
+                    Ok(Some((mut req, pl))) => {
+                        trace!(
+                            "http message received: {:?}\r\n\r\npayload type: {:?}",
+                            req,
+                            pl
+                        );
 
-                // Handle `EXPECT: 100-Continue` header.
-                // expect should be polled exclusively until finished.
-                if req.head().expect() {
-                    req = dispatcher.expect(req).await?;
-                }
+                        // write dispatcher's state to request.
+                        dispatcher.set_peer_addr(&mut req);
+                        dispatcher.set_on_connect_data(&mut req);
 
-                // get response and body from service_call.
-                let (res, body) = dispatcher.service_call(req, payload.as_mut()).await?;
+                        // payload type indicate how request is handled.
+                        match pl {
+                            // upgrade the dispatcher and poll on it exclusively.
+                            PayloadType::Stream(_) if dispatcher.is_upgradeable() => {
+                                return dispatcher.upgrade(req).await
+                            }
+                            // generate and set payload for dispatcher.
+                            PayloadType::Stream(decoder)
+                            | PayloadType::Payload(decoder) => {
+                                // Payload is a smart pointer passed to service call where incoming
+                                // io data can be read from.
+                                // PayloadSender is the sink of Payload for pushing new data into it.
+                                let (ps, pl) = Payload::create(false);
+                                let (req1, _) =
+                                    req.replace_payload(crate::Payload::H1(pl));
+                                req = req1;
+                                // attach decoder and sender to dispatcher.
+                                dispatcher.set_payload((decoder, ps));
+                            }
+                            // no payload so ignore.
+                            PayloadType::None => {}
+                        };
 
-                // encode response and write it to buffer first.
-                // body would be handled later in send_payload
-                if let Err(e) = dispatcher
-                    .codec
-                    .encode(Message::Item((res, body.size())), &mut dispatcher.write_buf)
-                {
-                    if let Some((_, payload)) = payload {
-                        payload.set_error(PayloadError::Incomplete(None));
+                        // Handle `EXPECT: 100-Continue` header.
+                        // expect should be polled exclusively until finished.
+                        if req.head().expect() {
+                            req = dispatcher.expect(req).await?;
+                        }
+
+                        // get response and body from service_call.
+                        let (res, body) = dispatcher.service_call(req).await?;
+
+                        // encode response and write it to buffer first.
+                        // body would be handled later in send_payload
+                        let size = body.size();
+                        dispatcher.encode_response(res, size)?;
+
+                        // send response to client.
+                        dispatcher.send_response(body, size).await?;
+
+                        // go to read branch if read buffer is empty.
+                        if dispatcher.read_buf.is_empty() {
+                            dispatcher.set_state(DispatcherState::Read);
+                        }
                     }
-                    return Err(DispatchError::Io(e));
-                }
-
-                match body.size() {
-                    BodySize::None | BodySize::Empty => None,
-                    _ => Some(body),
-                }
+                    // decode failure because not enough data read.
+                    Ok(None) => match *state {
+                        // still can read more. continue.
+                        DispatchReaderState::Partial => {
+                            dispatcher.set_state(DispatcherState::Read);
+                        }
+                        // nothing can be read anymore. stop dispatcher.
+                        DispatchReaderState::All => {
+                            dispatcher.set_state(DispatcherState::Stop);
+                        }
+                    },
+                    Err(e) => {
+                        error!("DispatchReader error: {:?}", e);
+                        dispatcher.set_state(DispatcherState::Stop);
+                    }
+                };
             }
-            // decode failure because not enough data read.
-            Ok(None) => {
-                match state {
-                    // still can read more. continue.
-                    DispatchReaderState::Partial => continue,
-                    // nothing can be read anymore. stop dispatcher.
-                    DispatchReaderState::All => break,
-                }
-            }
-            Err(e) => {
-                error!("DispatchReader error: {:?}", e);
-                break;
-            }
-        };
-
-        // send payload to client.
-        dispatcher.send_payload(payload).await?;
-    }
-
-    dispatcher.stop().await
+            DispatcherState::Stop => return dispatcher.stop().await,
+        }
+    }`
 }
 
 pub struct Dispatcher<'a, Io, S, B, X, U>
@@ -176,8 +175,16 @@ where
     codec: Codec,
     read_buf: BytesMut,
     write_buf: BytesMut,
+    payload: Option<(PayloadDecoder, PayloadSender)>,
     sleep: Pin<&'a mut Sleep>,
+    state: DispatcherState,
     _body: PhantomData<B>,
+}
+
+enum DispatcherState {
+    Read,
+    Handle(DispatchReaderState),
+    Stop,
 }
 
 impl<'a, Io, S, B, X, U> Dispatcher<'a, Io, S, B, X, U>
@@ -192,6 +199,7 @@ where
     U: Service<(Request, Framed<Io, Codec>), Response = ()>,
     U::Error: fmt::Display,
 {
+    #[inline(always)]
     fn new(
         io: Io,
         flow: Rc<RefCell<HttpFlow<S, X, U>>>,
@@ -208,9 +216,21 @@ where
             codec: Codec::new(config),
             read_buf: BytesMut::with_capacity(HW_BUFFER_SIZE),
             write_buf: BytesMut::with_capacity(HW_BUFFER_SIZE),
+            payload: None,
             sleep,
+            state: DispatcherState::Read,
             _body: PhantomData,
         }
+    }
+
+    #[inline(always)]
+    fn set_state(&mut self, state: DispatcherState) {
+        self.state = state;
+    }
+
+    #[inline(always)]
+    fn set_payload(&mut self, payload: (PayloadDecoder, PayloadSender)) {
+        self.payload = Some(payload);
     }
 
     // merge on_connect_ext data into request extensions
@@ -240,10 +260,32 @@ where
     }
 
     #[inline(always)]
-    fn send_payload(
+    fn encode_response(
         &mut self,
-        payload: Option<ResponseBody<B>>,
+        res: Response<()>,
+        size: BodySize,
+    ) -> Result<(), DispatchError> {
+        self.codec
+            .encode(Message::Item((res, size)), &mut self.write_buf)
+            .map_err(|e| {
+                if let Some((_, sender)) = self.payload.take() {
+                    sender.set_error(PayloadError::Incomplete(None));
+                }
+                DispatchError::Io(e)
+            })
+    }
+
+    #[inline(always)]
+    fn send_response(
+        &mut self,
+        body: ResponseBody<B>,
+        size: BodySize,
     ) -> DispatchWriter<'_, Io, B> {
+        let payload = match size {
+            BodySize::None | BodySize::Empty => None,
+            _ => Some(body),
+        };
+
         DispatchWriter {
             io: &mut self.io,
             codec: &mut self.codec,
@@ -253,13 +295,14 @@ where
     }
 
     // call service future and resolve it.
-    async fn service_call<'s: 'p, 'p>(
-        &'s mut self,
+    #[inline(always)]
+    async fn service_call(
+        &mut self,
         req: Request,
-        payload: Option<&'p mut (PayloadDecoder, PayloadSender)>,
     ) -> Result<(Response<()>, ResponseBody<B>), DispatchError> {
         // manually construct reader so self can be borrow with individual fields.
         let reader = DispatchReader::new(&mut self.io, &mut self.read_buf);
+        let payload = self.payload.as_mut();
 
         // this is a wrapper to make sure borrowing dispatcher state is possible in
         // child async blocks.
@@ -552,7 +595,7 @@ where
             }
         }
 
-        log::trace!("flushed {} bytes", written);
+        trace!("flushed {} bytes", written);
 
         // remove written data
         if written == len {
@@ -565,7 +608,7 @@ where
         }
 
         if this.payload.is_none() && this.write_buf.is_empty() {
-            Poll::Ready(Ok(()))
+            io.poll_flush(cx).map_err(DispatchError::Io)
         } else {
             Poll::Pending
         }

@@ -7,9 +7,7 @@ use std::{fmt, net, rc::Rc};
 use actix_codec::{AsyncRead, AsyncWrite, Framed};
 use actix_rt::net::TcpStream;
 use actix_service::{pipeline_factory, IntoServiceFactory, Service, ServiceFactory};
-use bytes::Bytes;
 use futures_core::{ready, Future};
-use h2::server::{self, Handshake};
 use pin_project::pin_project;
 
 use crate::body::MessageBody;
@@ -563,8 +561,12 @@ where
 
         async move {
             match proto {
+                Protocol::Http1 => {
+                    crate::h1::h1_dispatch(io, flow, on_connect_data, peer_addr, config)
+                        .await
+                }
                 Protocol::Http2 => {
-                    let connection = server::handshake(io).await.map_err(|e| {
+                    let connection = h2::server::handshake(io).await.map_err(|e| {
                         trace!("H2 handshake error: {}", e);
                         e
                     })?;
@@ -577,10 +579,6 @@ where
                         peer_addr,
                     )
                     .await
-                }
-                Protocol::Http1 => {
-                    crate::h1::h1_dispatch(io, flow, on_connect_data, peer_addr, config)
-                        .await
                 }
                 proto => unimplemented!("Unsupported HTTP version: {:?}.", proto),
             }
