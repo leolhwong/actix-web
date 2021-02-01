@@ -507,7 +507,7 @@ where
 {
     type Response = ();
     type Error = DispatchError;
-    type Future = HttpServiceHandlerResponse<T, S, B, X, U>;
+    type Future = impl Future<Output = Result<(), DispatchError>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let mut flow = self.flow.borrow_mut();
@@ -558,116 +558,31 @@ where
     ) -> Self::Future {
         let on_connect_data =
             OnConnectData::from_io(&io, self.on_connect_ext.as_deref());
+        let config = self.cfg.clone();
+        let flow = self.flow.clone();
 
-        match proto {
-            Protocol::Http2 => HttpServiceHandlerResponse {
-                state: State::H2Handshake(Some((
-                    server::handshake(io),
-                    self.cfg.clone(),
-                    self.flow.clone(),
-                    on_connect_data,
-                    peer_addr,
-                ))),
-            },
-
-            Protocol::Http1 => HttpServiceHandlerResponse {
-                state: State::H1(h1::Dispatcher::new(
-                    io,
-                    self.cfg.clone(),
-                    self.flow.clone(),
-                    on_connect_data,
-                    peer_addr,
-                )),
-            },
-
-            proto => unimplemented!("Unsupported HTTP version: {:?}.", proto),
-        }
-    }
-}
-
-#[pin_project(project = StateProj)]
-enum State<T, S, B, X, U>
-where
-    S: Service<Request>,
-    S::Future: 'static,
-    S::Error: Into<Error>,
-    T: AsyncRead + AsyncWrite + Unpin,
-    B: MessageBody,
-    X: Service<Request, Response = Request>,
-    X::Error: Into<Error>,
-    U: Service<(Request, Framed<T, h1::Codec>), Response = ()>,
-    U::Error: fmt::Display,
-{
-    H1(#[pin] h1::Dispatcher<T, S, B, X, U>),
-    H2(#[pin] Dispatcher<T, S, B, X, U>),
-    H2Handshake(
-        Option<(
-            Handshake<T, Bytes>,
-            ServiceConfig,
-            Rc<RefCell<HttpFlow<S, X, U>>>,
-            OnConnectData,
-            Option<net::SocketAddr>,
-        )>,
-    ),
-}
-
-#[pin_project]
-pub struct HttpServiceHandlerResponse<T, S, B, X, U>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-    S: Service<Request>,
-    S::Error: Into<Error> + 'static,
-    S::Future: 'static,
-    S::Response: Into<Response<B>> + 'static,
-    B: MessageBody + 'static,
-    X: Service<Request, Response = Request>,
-    X::Error: Into<Error>,
-    U: Service<(Request, Framed<T, h1::Codec>), Response = ()>,
-    U::Error: fmt::Display,
-{
-    #[pin]
-    state: State<T, S, B, X, U>,
-}
-
-impl<T, S, B, X, U> Future for HttpServiceHandlerResponse<T, S, B, X, U>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-    S: Service<Request>,
-    S::Error: Into<Error> + 'static,
-    S::Future: 'static,
-    S::Response: Into<Response<B>> + 'static,
-    B: MessageBody,
-    X: Service<Request, Response = Request>,
-    X::Error: Into<Error>,
-    U: Service<(Request, Framed<T, h1::Codec>), Response = ()>,
-    U::Error: fmt::Display,
-{
-    type Output = Result<(), DispatchError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.as_mut().project().state.project() {
-            StateProj::H1(disp) => disp.poll(cx),
-            StateProj::H2(disp) => disp.poll(cx),
-            StateProj::H2Handshake(data) => {
-                match ready!(Pin::new(&mut data.as_mut().unwrap().0).poll(cx)) {
-                    Ok(conn) => {
-                        let (_, cfg, srv, on_connect_data, peer_addr) =
-                            data.take().unwrap();
-                        self.as_mut().project().state.set(State::H2(Dispatcher::new(
-                            srv,
-                            conn,
-                            on_connect_data,
-                            cfg,
-                            None,
-                            peer_addr,
-                        )));
-                        self.poll(cx)
-                    }
-                    Err(err) => {
-                        trace!("H2 handshake error: {}", err);
-                        Poll::Ready(Err(err.into()))
-                    }
+        async move {
+            match proto {
+                Protocol::Http2 => {
+                    let connection = server::handshake(io).await.map_err(|e| {
+                        trace!("H2 handshake error: {}", e);
+                        e
+                    })?;
+                    Dispatcher::new(
+                        flow,
+                        connection,
+                        on_connect_data,
+                        config,
+                        None,
+                        peer_addr,
+                    )
+                    .await
                 }
+                Protocol::Http1 => {
+                    crate::h1::h1_dispatch(io, flow, on_connect_data, peer_addr, config)
+                        .await
+                }
+                proto => unimplemented!("Unsupported HTTP version: {:?}.", proto),
             }
         }
     }

@@ -56,7 +56,7 @@ where
     B: MessageBody,
 {
     pub(crate) fn new(
-        services: Rc<RefCell<HttpFlow<S, X, U>>>,
+        flow: Rc<RefCell<HttpFlow<S, X, U>>>,
         connection: Connection<T, Bytes>,
         on_connect_data: OnConnectData,
         config: ServiceConfig,
@@ -80,7 +80,7 @@ where
         };
 
         Dispatcher {
-            flow: services,
+            flow,
             config,
             peer_addr,
             connection,

@@ -8,7 +8,7 @@ use actix_service::{IntoServiceFactory, Service, ServiceFactory};
 use crate::body::MessageBody;
 use crate::config::{KeepAlive, ServiceConfig};
 use crate::error::Error;
-use crate::h1::{Codec, ExpectHandler, H1Service, UpgradeHandler};
+use crate::h1::{Codec, ExpectHandler, UpgradeHandler};
 use crate::h2::H2Service;
 use crate::request::Request;
 use crate::response::Response;
@@ -178,29 +178,6 @@ where
     {
         self.on_connect_ext = Some(Rc::new(f));
         self
-    }
-
-    /// Finish service configuration and create a HTTP Service for HTTP/1 protocol.
-    pub fn h1<F, B>(self, service: F) -> H1Service<T, S, B, X, U>
-    where
-        B: MessageBody,
-        F: IntoServiceFactory<S, Request>,
-        S::Error: Into<Error>,
-        S::InitError: fmt::Debug,
-        S::Response: Into<Response<B>>,
-    {
-        let cfg = ServiceConfig::new(
-            self.keep_alive,
-            self.client_timeout,
-            self.client_disconnect,
-            self.secure,
-            self.local_addr,
-        );
-
-        H1Service::with_config(cfg, service.into_factory())
-            .expect(self.expect)
-            .upgrade(self.upgrade)
-            .on_connect_ext(self.on_connect_ext)
     }
 
     /// Finish service configuration and create a HTTP service for HTTP/2 protocol.

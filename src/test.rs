@@ -682,7 +682,7 @@ where
                         AppConfig::new(false, local_addr, format!("{}", local_addr));
                     HttpService::build()
                         .client_timeout(ctimeout)
-                        .h1(map_config(factory(), move |_| cfg.clone()))
+                        .finish(map_config(factory(), move |_| cfg.clone()))
                         .tcp()
                 }),
                 HttpVer::Http2 => builder.listen("test", tcp, move || {

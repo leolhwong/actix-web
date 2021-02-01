@@ -14,7 +14,7 @@ use crate::header::HeaderMap;
 use crate::message::{ConnectionType, ResponseHead};
 use crate::request::Request;
 
-const MAX_BUFFER_SIZE: usize = 131_072;
+pub(crate) const MAX_BUFFER_SIZE: usize = 131_072;
 const MAX_HEADERS: usize = 96;
 
 /// Incoming message decoder
@@ -22,7 +22,7 @@ pub(crate) struct MessageDecoder<T: MessageType>(PhantomData<T>);
 
 #[derive(Debug)]
 /// Incoming request type
-pub(crate) enum PayloadType {
+pub enum PayloadType {
     None,
     Payload(PayloadDecoder),
     Stream(PayloadDecoder),

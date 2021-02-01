@@ -5,9 +5,9 @@ use bitflags::bitflags;
 use bytes::BytesMut;
 use http::{Method, Version};
 
-use super::decoder::{PayloadDecoder, PayloadItem, PayloadType};
+use super::decoder::PayloadType;
+use super::Message;
 use super::{decoder, encoder};
-use super::{Message, MessageType};
 use crate::body::BodySize;
 use crate::config::ServiceConfig;
 use crate::error::ParseError;
@@ -27,7 +27,6 @@ bitflags! {
 pub struct Codec {
     config: ServiceConfig,
     decoder: decoder::MessageDecoder<Request>,
-    payload: Option<PayloadDecoder>,
     version: Version,
     ctype: ConnectionType,
 
@@ -63,7 +62,6 @@ impl Codec {
             config,
             flags,
             decoder: decoder::MessageDecoder::default(),
-            payload: None,
             version: Version::HTTP_11,
             ctype: ConnectionType::Close,
             encoder: encoder::MessageEncoder::default(),
@@ -88,18 +86,6 @@ impl Codec {
         self.flags.contains(Flags::KEEPALIVE_ENABLED)
     }
 
-    /// Check last request's message type.
-    #[inline]
-    pub fn message_type(&self) -> MessageType {
-        if self.flags.contains(Flags::STREAM) {
-            MessageType::Stream
-        } else if self.payload.is_none() {
-            MessageType::None
-        } else {
-            MessageType::Payload
-        }
-    }
-
     #[inline]
     pub fn config(&self) -> &ServiceConfig {
         &self.config
@@ -107,20 +93,11 @@ impl Codec {
 }
 
 impl Decoder for Codec {
-    type Item = Message<Request>;
+    type Item = (Request, PayloadType);
     type Error = ParseError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if let Some(ref mut payload) = self.payload {
-            Ok(match payload.decode(src)? {
-                Some(PayloadItem::Chunk(chunk)) => Some(Message::Chunk(Some(chunk))),
-                Some(PayloadItem::Eof) => {
-                    self.payload.take();
-                    Some(Message::Chunk(None))
-                }
-                None => None,
-            })
-        } else if let Some((req, payload)) = self.decoder.decode(src)? {
+        if let Some((req, payload)) = self.decoder.decode(src)? {
             let head = req.head();
             self.flags.set(Flags::HEAD, head.method == Method::HEAD);
             self.version = head.version;
@@ -130,15 +107,11 @@ impl Decoder for Codec {
             {
                 self.ctype = ConnectionType::Close
             }
-            match payload {
-                PayloadType::None => self.payload = None,
-                PayloadType::Payload(pl) => self.payload = Some(pl),
-                PayloadType::Stream(pl) => {
-                    self.payload = Some(pl);
-                    self.flags.insert(Flags::STREAM);
-                }
+
+            if let PayloadType::Stream(_) = payload {
+                self.flags.insert(Flags::STREAM);
             }
-            Ok(Some(Message::Item(req)))
+            Ok(Some((req, payload)))
         } else {
             Ok(None)
         }

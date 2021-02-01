@@ -2,7 +2,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::pin::Pin;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use actix_utils::task::LocalWaker;
@@ -47,7 +47,7 @@ impl Payload {
 
         (
             PayloadSender {
-                inner: Rc::downgrade(&shared),
+                inner: shared.clone(),
             },
             Payload { inner: shared },
         )
@@ -101,28 +101,28 @@ impl Stream for Payload {
 
 /// Sender part of the payload stream
 pub struct PayloadSender {
-    inner: Weak<RefCell<Inner>>,
+    inner: Rc<RefCell<Inner>>,
 }
 
 impl PayloadSender {
     #[inline]
-    pub fn set_error(&mut self, err: PayloadError) {
-        if let Some(shared) = self.inner.upgrade() {
-            shared.borrow_mut().set_error(err)
+    pub fn set_error(&self, err: PayloadError) {
+        if Rc::strong_count(&self.inner) != 1 {
+            self.inner.borrow_mut().set_error(err)
         }
     }
 
     #[inline]
-    pub fn feed_eof(&mut self) {
-        if let Some(shared) = self.inner.upgrade() {
-            shared.borrow_mut().feed_eof()
+    pub fn feed_eof(&self) {
+        if Rc::strong_count(&self.inner) != 1 {
+            self.inner.borrow_mut().feed_eof()
         }
     }
 
     #[inline]
-    pub fn feed_data(&mut self, data: Bytes) {
-        if let Some(shared) = self.inner.upgrade() {
-            shared.borrow_mut().feed_data(data)
+    pub fn feed_data(&self, data: Bytes) {
+        if Rc::strong_count(&self.inner) != 1 {
+            self.inner.borrow_mut().feed_data(data)
         }
     }
 
@@ -130,11 +130,11 @@ impl PayloadSender {
     pub fn need_read(&self, cx: &mut Context<'_>) -> PayloadStatus {
         // we check need_read only if Payload (other side) is alive,
         // otherwise always return true (consume payload)
-        if let Some(shared) = self.inner.upgrade() {
-            if shared.borrow().need_read {
+        if Rc::strong_count(&self.inner) != 1 {
+            if self.inner.borrow().need_read {
                 PayloadStatus::Read
             } else {
-                shared.borrow_mut().io_task.register(cx.waker());
+                self.inner.borrow_mut().io_task.register(cx.waker());
                 PayloadStatus::Pause
             }
         } else {

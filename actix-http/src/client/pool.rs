@@ -325,7 +325,7 @@ where
                 {
                     if let Some(timeout) = self.config.disconnect_timeout {
                         if let ConnectionType::H1(io) = conn.io {
-                            actix_rt::spawn(CloseConnection::new(io, timeout))
+                            actix_rt::spawn(CloseConnection::new(io, timeout));
                         }
                     }
                 } else {
@@ -340,8 +340,8 @@ where
                                     if let ConnectionType::H1(io) = io {
                                         actix_rt::spawn(CloseConnection::new(
                                             io, timeout,
-                                        ))
-                                    }
+                                        ));
+                                    };
                                 }
                                 continue;
                             }
@@ -372,7 +372,7 @@ where
         self.acquired -= 1;
         if let Some(timeout) = self.config.disconnect_timeout {
             if let ConnectionType::H1(io) = io {
-                actix_rt::spawn(CloseConnection::new(io, timeout))
+                actix_rt::spawn(CloseConnection::new(io, timeout));
             }
         }
         self.check_availability();
@@ -535,7 +535,7 @@ where
             rx: Some(rx),
             inner: Some(inner),
             config,
-        })
+        });
     }
 }
 
