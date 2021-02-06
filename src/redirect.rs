@@ -28,13 +28,15 @@ enum RedirectType {
 ///
 /// # Examples
 /// ```
+/// use actix_web::{web, App, Redirect};
+///
 /// App::new()
 ///     // redirect "/duck" to DuckDuckGo
 ///     .service(Redirect::from("/duck").to_absolute("https://duckduckgo.com/"))
 ///     .service(
-///         // redirect "/api/old" to "/api/new"
-///         web::scope("/api").service(Redirect::from("/old").to_relative("/new"))
-///     )
+///         // redirect "/api/old" to "/api/new" using `web::redirect` helper
+///         web::scope("/api").service(web::redirect("/old").to_relative("/new"))
+///     );
 /// ```
 ///
 /// [mdn-redirects]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Redirections#temporary_redirections
@@ -93,7 +95,7 @@ impl Redirect {
     /// 301 and 302 codes, respectively.
     ///
     /// ```
-    /// # use ancile::helpers::Redirect;
+    /// # use actix_web::{http::StatusCode, Redirect};
     /// // redirects would use "301 Moved Permanently" status code
     /// Redirect::from("/old")
     ///     .to_relative("/new")

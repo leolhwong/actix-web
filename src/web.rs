@@ -236,7 +236,7 @@ pub fn method(method: Method) -> Route {
 /// See [`Redirect`] docs for usage details.
 ///
 /// ```rust
-/// use actix_web::{web, http, App, HttpResponse};
+/// use actix_web::{web, App};
 ///
 /// let app = App::new().service(
 ///     web::redirect("/one").to_relative("/two")
