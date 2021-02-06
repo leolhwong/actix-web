@@ -1,4 +1,5 @@
 //! Essentials helper functions and types for application registration.
+
 use actix_http::http::Method;
 use actix_router::IntoPattern;
 use std::future::Future;
@@ -11,6 +12,7 @@ use crate::extract::FromRequest;
 use crate::handler::Handler;
 use crate::resource::Resource;
 use crate::responder::Responder;
+use crate::redirect::Redirect;
 use crate::route::Route;
 use crate::scope::Scope;
 use crate::service::WebService;
@@ -227,6 +229,21 @@ pub fn trace() -> Route {
 ///
 pub fn method(method: Method) -> Route {
     Route::new().method(method)
+}
+
+/// Create a relative or absolute redirect.
+///
+/// See [`Redirect`] docs for usage details.
+///
+/// ```rust
+/// use actix_web::{web, http, App, HttpResponse};
+///
+/// let app = App::new().service(
+///     web::redirect("/one").to_relative("/two")
+/// );
+/// ```
+pub fn redirect(path: impl Into<String>) -> Redirect {
+    Redirect::from(path)
 }
 
 /// Create a new route and add handler.

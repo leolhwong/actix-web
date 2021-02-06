@@ -84,6 +84,7 @@ pub mod middleware;
 mod request;
 mod request_data;
 mod resource;
+mod redirect;
 mod responder;
 mod rmap;
 mod route;
@@ -105,6 +106,7 @@ pub use crate::request::HttpRequest;
 pub use crate::resource::Resource;
 pub use crate::responder::Responder;
 pub use crate::route::Route;
+pub use crate::redirect::Redirect;
 pub use crate::scope::Scope;
 pub use crate::server::HttpServer;
 // TODO: is exposing the error directly really needed
