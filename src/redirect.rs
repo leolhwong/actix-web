@@ -1,8 +1,7 @@
 //! See [`Redirect`] for service documentation.
 
-use std::future::ready;
-
 use actix_service::fn_service;
+use futures_util::future::ready;
 
 use crate::{
     dev::{AppService, HttpServiceFactory, ResourceDef, ServiceRequest},
@@ -138,7 +137,7 @@ impl HttpServiceFactory for Redirect {
 
             ready(Ok(req.into_response(
                 HttpResponse::build(status_code)
-                    .header(header::LOCATION, redirect_to)
+                    .insert_header((header::LOCATION, redirect_to))
                     .finish(),
             )))
         });
