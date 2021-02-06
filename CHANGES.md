@@ -4,6 +4,7 @@
 ### Added
 * The method `Either<web::Json<T>, web::Form<T>>::into_inner()` which returns the inner type for
   whichever variant was created. Also works for `Either<web::Form<T>, web::Json<T>>`. [#1894]
+* Add rudimentary redirection service (`Redirect`/`web::redirect`). [#1961]
 
 ### Changed
 * Rework `Responder` trait to be sync and returns `Response`/`HttpResponse` directly.
@@ -30,6 +31,7 @@
 [#1869]: https://github.com/actix/actix-web/pull/1869
 [#1906]: https://github.com/actix/actix-web/pull/1906
 [#1957]: https://github.com/actix/actix-web/pull/1957
+[#1961]: https://github.com/actix/actix-web/pull/1961
 
 
 ## 4.0.0-beta.1 - 2021-01-07
