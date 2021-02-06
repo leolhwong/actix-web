@@ -81,10 +81,10 @@ pub mod guard;
 mod handler;
 mod info;
 pub mod middleware;
+mod redirect;
 mod request;
 mod request_data;
 mod resource;
-mod redirect;
 mod responder;
 mod rmap;
 mod route;
@@ -102,11 +102,11 @@ pub use actix_web_codegen::*;
 
 pub use crate::app::App;
 pub use crate::extract::FromRequest;
+pub use crate::redirect::Redirect;
 pub use crate::request::HttpRequest;
 pub use crate::resource::Resource;
 pub use crate::responder::Responder;
 pub use crate::route::Route;
-pub use crate::redirect::Redirect;
 pub use crate::scope::Scope;
 pub use crate::server::HttpServer;
 // TODO: is exposing the error directly really needed
