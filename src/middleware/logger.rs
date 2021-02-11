@@ -12,13 +12,13 @@ use std::task::{Context, Poll};
 use actix_service::{Service, Transform};
 use bytes::Bytes;
 use futures_util::future::{ok, Ready};
-use log::debug;
+use log::{debug, error};
 use regex::{Regex, RegexSet};
 use time::OffsetDateTime;
 
 use crate::dev::{BodySize, MessageBody, ResponseBody};
 use crate::error::{Error, Result};
-use crate::http::{HeaderName, StatusCode};
+use crate::http::HeaderName;
 use crate::service::{ServiceRequest, ServiceResponse};
 use crate::HttpResponse;
 
@@ -35,7 +35,7 @@ use crate::HttpResponse;
 /// default format:
 ///
 /// ```plain
-/// %a "%r" %s %b "%{Referer}i" "%{User-Agent}i" %T
+/// %a "%r" %s %b "%{Referer}i" "%{User-Agent}i" %f %T
 /// ```
 ///
 /// ```rust
@@ -62,6 +62,8 @@ use crate::HttpResponse;
 /// `%s`  Response status code
 ///
 /// `%b`  Size of response in bytes, including HTTP headers
+///
+/// `%f`  Time to first byte in milliseconds
 ///
 /// `%T` Time taken to serve the request, in seconds with floating fraction in
 /// .06f format
@@ -288,9 +290,7 @@ where
         };
 
         if let Some(error) = res.response().error() {
-            if res.response().head().status != StatusCode::INTERNAL_SERVER_ERROR {
-                debug!("Error in response: {:?}", error);
-            }
+            error!("Error in response: {:?}", error);
         }
 
         if let Some(ref mut format) = this.format {
@@ -308,6 +308,7 @@ where
                 time,
                 format,
                 size: 0,
+                ttfb: None,
             })
         })))
     }
@@ -322,6 +323,7 @@ pub struct StreamLog<B> {
     format: Option<Format>,
     size: usize,
     time: OffsetDateTime,
+    ttfb: Option<OffsetDateTime>, // time to first byte
 }
 
 #[pinned_drop]
@@ -330,7 +332,7 @@ impl<B> PinnedDrop for StreamLog<B> {
         if let Some(ref format) = self.format {
             let render = |fmt: &mut Formatter<'_>| {
                 for unit in &format.0 {
-                    unit.render(fmt, self.size, self.time)?;
+                    unit.render(fmt, self.size, self.time, self.ttfb)?;
                 }
                 Ok(())
             };
@@ -378,7 +380,7 @@ impl Format {
     pub fn new(s: &str) -> Format {
         log::trace!("Access log format: {}", s);
         let fmt =
-            Regex::new(r"%(\{([A-Za-z0-9\-_]+)\}([aioe]|xi)|[atPrUsbTD]?)").unwrap();
+            Regex::new(r"%(\{([A-Za-z0-9\-_]+)\}([aioe]|xi)|[atPrUsbTfD]?)").unwrap();
 
         let mut idx = 0;
         let mut results = Vec::new();
@@ -420,6 +422,7 @@ impl Format {
                     "b" => FormatText::ResponseSize,
                     "U" => FormatText::UrlPath,
                     "T" => FormatText::Time,
+                    "f" => FormatText::TTFB,
                     "D" => FormatText::TimeMillis,
                     _ => FormatText::Str(m.as_str().to_owned()),
                 });
@@ -446,6 +449,7 @@ pub enum FormatText {
     RequestTime,
     ResponseStatus,
     ResponseSize,
+    TTFB,
     Time,
     TimeMillis,
     RemoteAddr,
@@ -482,6 +486,7 @@ impl FormatText {
         fmt: &mut Formatter<'_>,
         size: usize,
         entry_time: OffsetDateTime,
+        ttfb: Option<OffsetDateTime>,
     ) -> Result<(), fmt::Error> {
         match *self {
             FormatText::Str(ref string) => fmt.write_str(string),
@@ -491,6 +496,15 @@ impl FormatText {
                 let rt = OffsetDateTime::now_utc() - entry_time;
                 let rt = rt.as_seconds_f64();
                 fmt.write_fmt(format_args!("{:.6}", rt))
+            }
+            FormatText::TTFB => {
+                if let Some(f) = ttfb {
+                    let rt = f - entry_time;
+                    let rt = rt.as_seconds_f64();
+                    return fmt.write_fmt(format_args!("{:.6}", rt));
+                }
+
+                "-".fmt(fmt)
             }
             FormatText::TimeMillis => {
                 let rt = OffsetDateTime::now_utc() - entry_time;
@@ -680,7 +694,7 @@ mod tests {
 
         let render = |fmt: &mut Formatter<'_>| {
             for unit in &format.0 {
-                unit.render(fmt, 1024, now)?;
+                unit.render(fmt, 1024, now, None)?;
             }
             Ok(())
         };
@@ -713,7 +727,7 @@ mod tests {
         let entry_time = OffsetDateTime::now_utc();
         let render = |fmt: &mut Formatter<'_>| {
             for unit in &format.0 {
-                unit.render(fmt, 1024, entry_time)?;
+                unit.render(fmt, 1024, entry_time, Some(entry_time))?;
             }
             Ok(())
         };
@@ -741,7 +755,7 @@ mod tests {
 
         let render = |fmt: &mut Formatter<'_>| {
             for unit in &format.0 {
-                unit.render(fmt, 1024, now)?;
+                unit.render(fmt, 1024, now, Some(now))?;
             }
             Ok(())
         };
@@ -774,7 +788,7 @@ mod tests {
         let entry_time = OffsetDateTime::now_utc();
         let render = |fmt: &mut Formatter<'_>| {
             for unit in &format.0 {
-                unit.render(fmt, 1024, entry_time)?;
+                unit.render(fmt, 1024, entry_time, Some(entry_time))?;
             }
             Ok(())
         };

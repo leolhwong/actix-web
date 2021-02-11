@@ -187,6 +187,10 @@ impl NamedFile {
         self
     }
 
+    pub fn content_type(&self) -> &mime::Mime {
+        &self.content_type
+    }
+
     /// Set the Content-Disposition for serving this file. This allows
     /// changing the inline/attachment disposition as well as the filename
     /// sent to the peer. By default the disposition is `inline` for text,

@@ -53,9 +53,6 @@ impl Response<Body> {
     #[inline]
     pub fn from_error(error: Error) -> Response {
         let mut resp = error.as_response_error().error_response();
-        if resp.head.status == StatusCode::INTERNAL_SERVER_ERROR {
-            error!("Internal Server Error: {:?}", error);
-        }
         resp.error = Some(error);
         resp
     }
